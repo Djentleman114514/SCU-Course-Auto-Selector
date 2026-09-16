@@ -14,7 +14,7 @@
 // 课序号、课程名称、课余量和上课时间会从选课页面自动读取。
 //
 // 同一课程号有多个班时，脚本会把页面显示的每个班都作为候选项。
-// 脚本按“星期 + 起始节次”自动分组：例如周四 10~11 节和周四 10~12 节
+// 脚本按同一天内“节次区间重叠”自动分组：例如周四 10~11 节和周四 10~12 节
 // 属于同一组；后续自动选课成功一门后，将停止该组的其他候选课程。
 //
 // 可直接在下面新增或删除课程号。
@@ -96,9 +96,42 @@ const SCU_COURSE_MONITOR_CONFIG = {
     }
   };
 
-  // 用户主动将同一时段的课程作为备选项。本项目按星期和起始节次分组，
-  // 不再根据周次或结束节次推断是否可以同时选课。
-  const timeGroupKey = section => `${section.weekday}:${section.startPeriod}`;
+  // 用户主动将同一时段的课程作为备选项。按星期分别排序后，将节次相交的
+  // 区间合并为同一组；不根据周次推断是否可以同时选课。
+  const buildTimeGroups = sections => {
+    const sectionsByWeekday = new Map();
+    for (const section of sections) {
+      const sameDay = sectionsByWeekday.get(section.weekday) || [];
+      sameDay.push(section);
+      sectionsByWeekday.set(section.weekday, sameDay);
+    }
+
+    const groups = [];
+    for (const sameDay of sectionsByWeekday.values()) {
+      const ordered = [...sameDay].sort((left, right) =>
+        left.startPeriod - right.startPeriod || left.endPeriod - right.endPeriod
+      );
+      let currentGroup = null;
+
+      for (const section of ordered) {
+        if (!currentGroup || section.startPeriod > currentGroup.endPeriod) {
+          currentGroup = {
+            key: `${section.weekday}:${section.startPeriod}-${section.endPeriod}`,
+            weekday: section.weekday,
+            startPeriod: section.startPeriod,
+            endPeriod: section.endPeriod,
+            sections: []
+          };
+          groups.push(currentGroup);
+        } else {
+          currentGroup.endPeriod = Math.max(currentGroup.endPeriod, section.endPeriod);
+          currentGroup.key = `${currentGroup.weekday}:${currentGroup.startPeriod}-${currentGroup.endPeriod}`;
+        }
+        currentGroup.sections.push(section);
+      }
+    }
+    return groups;
+  };
 
   async function check(courseNumber) {
     const input = doc.getElementById("kch");
@@ -110,6 +143,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
     const candidates = [...doc.querySelectorAll("#xirxkxkbody tr")]
       .map(parseCourseRow)
       .filter(candidate => candidate?.kch === courseNumber);
+    buildTimeGroups(candidates);
     const availableCandidates = candidates.filter(candidate => candidate.availableSeats > 0);
 
     console.log(`${courseNumber}：找到 ${candidates.length} 个班，${availableCandidates.length} 个有余量。`);

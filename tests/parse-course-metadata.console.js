@@ -7,7 +7,7 @@
  * 3. 将本文件完整复制到浏览器 Console 后运行。
  *
  * 此脚本只读取当前表格并打印数据：不会查询、勾选、提交或修改选课状态。
- * 它会按“星期 + 起始节次”打印自动分组结果。
+ * 它会按同一天内“节次区间重叠”打印自动分组结果。
  */
 
 (() => {
@@ -75,14 +75,42 @@
     .filter(Boolean)
     .filter(section => wanted.size === 0 || wanted.has(section.kch));
 
-  const timeGroupKey = section => `${section.weekday}:${section.startPeriod}`;
-  const timeGroups = new Map();
-  for (const section of sections) {
-    const key = timeGroupKey(section);
-    const group = timeGroups.get(key) || [];
-    group.push(section);
-    timeGroups.set(key, group);
-  }
+  const buildTimeGroups = sourceSections => {
+    const sectionsByWeekday = new Map();
+    for (const section of sourceSections) {
+      const sameDay = sectionsByWeekday.get(section.weekday) || [];
+      sameDay.push(section);
+      sectionsByWeekday.set(section.weekday, sameDay);
+    }
+
+    const groups = [];
+    for (const sameDay of sectionsByWeekday.values()) {
+      const ordered = [...sameDay].sort((left, right) =>
+        left.startPeriod - right.startPeriod || left.endPeriod - right.endPeriod
+      );
+      let currentGroup = null;
+
+      for (const section of ordered) {
+        if (!currentGroup || section.startPeriod > currentGroup.endPeriod) {
+          currentGroup = {
+            key: `${section.weekday}:${section.startPeriod}-${section.endPeriod}`,
+            weekdayText: section.weekdayText,
+            startPeriod: section.startPeriod,
+            endPeriod: section.endPeriod,
+            sections: []
+          };
+          groups.push(currentGroup);
+        } else {
+          currentGroup.endPeriod = Math.max(currentGroup.endPeriod, section.endPeriod);
+          currentGroup.key = `${section.weekday}:${currentGroup.startPeriod}-${currentGroup.endPeriod}`;
+        }
+        currentGroup.sections.push(section);
+      }
+    }
+    return groups;
+  };
+
+  const timeGroups = buildTimeGroups(sections);
 
   const printable = sections.map(section => ({
     课程: `${section.kch}_${section.kxh}`,
@@ -98,13 +126,13 @@
   console.log(`解析完成：${sections.length} 个班次。`);
   console.table(printable);
 
-  const printableGroups = [...timeGroups.entries()].map(([key, group]) => ({
-    分组: key,
-    时段: `${group[0].weekdayText} / 第 ${group[0].startPeriod} 节开始`,
-    候选班次: group.map(section => `${section.kch}_${section.kxh} ${section.name}`).join(" | "),
-    班次数量: group.length
+  const printableGroups = timeGroups.map(group => ({
+    分组: group.key,
+    时段: `${group.weekdayText} / 第 ${group.startPeriod}~${group.endPeriod} 节`,
+    候选班次: group.sections.map(section => `${section.kch}_${section.kxh} ${section.name}`).join(" | "),
+    班次数量: group.sections.length
   }));
-  console.log(`自动分为 ${timeGroups.size} 个时段组：`);
+  console.log(`自动分为 ${timeGroups.length} 个时段组：`);
   console.table(printableGroups);
 
   // 方便在 Console 中继续查看完整原始字段。
