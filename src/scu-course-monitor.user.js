@@ -85,7 +85,9 @@ const SCU_COURSE_MONITOR_CONFIG = {
         weekText: data.zcsm || "周次未知",
         weekday: Number(data.skxq),
         startPeriod: Number(data.skjc),
-        endPeriod: Number(data.cxjc)
+        periodCount: Number(data.cxjc),
+        // cxjc 表示连续上课的节数，不是结束节次。
+        endPeriod: Number(data.skjc) + Number(data.cxjc) - 1
       };
     } catch (error) {
       console.warn("无法解析课程行数据：", error);

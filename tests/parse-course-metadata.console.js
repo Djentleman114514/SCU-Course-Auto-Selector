@@ -57,7 +57,9 @@
         weekday: Number(data.skxq),
         weekdayText: weekdayNames[Number(data.skxq)] || `未知星期(${data.skxq})`,
         startPeriod: Number(data.skjc),
-        endPeriod: Number(data.cxjc),
+        periodCount: Number(data.cxjc),
+        // cxjc 表示连续上课的节数，不是结束节次。
+        endPeriod: Number(data.skjc) + Number(data.cxjc) - 1,
         location: [data.kkxqm, data.jxlm, data.jasm].filter(Boolean).join(" / "),
         raw: data
       };
@@ -104,7 +106,7 @@
     已选人数: section.selectedSeats,
     周次: section.weekText,
     星期: section.weekdayText,
-    节次: `${section.startPeriod}~${section.endPeriod}`,
+    节次: `${section.startPeriod}~${section.endPeriod}（连续 ${section.periodCount} 节）`,
     地点: section.location
   }));
 
@@ -122,4 +124,3 @@
   window.__scuCourseParseTest = { sections, conflicts };
   console.log("完整数据：window.__scuCourseParseTest");
 })();
-
