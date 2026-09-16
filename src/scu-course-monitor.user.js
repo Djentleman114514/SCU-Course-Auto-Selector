@@ -1,28 +1,26 @@
 // ==UserScript==
-// @name         SCU Course Monitor
+// @name         SCU Course Monitor - Basic Flow
 // @namespace    scu-course-monitor
-// @version      0.3.0
-// @description  四川大学自由选课页面课余量监控（模拟选择版）
+// @version      0.4.0-basic
+// @description  四川大学自由选课页面基础选课流程（无分组）
 // @match        https://*.scu.edu.cn/*
 // @grant        none
 // ==/UserScript==
 
 // ============================================================================
-// 用户课程配置：只修改本区内容，不需要修改下方监控逻辑。
+// 用户课程配置：只修改本区内容。
 //
-// 每一项只填写课程号，例如 "106588020"。数组顺序即优先级：同一时段内
-// 有多门课时，模拟版会优先计划选择排在前面的课程号。
+// 每一项只填写课程号。数组顺序即优先级：脚本会从前到后查询，发现第一门
+// 有余量的课程后，自动勾选并调用页面提交函数，然后停止。
 //
-// 课序号、课程名称、课余量和上课时间会从选课页面自动读取。
-// 同一天内节次区间重叠的候选课会自动归入同一个时段组。
-//
-// 当前是“模拟选择版”：会暂时关闭“有课余量的课程”筛选，读取全部班次
-// 以验证完整分组；但只把课余量大于 0 的班次列为“将选择”。
-// 不会勾选任何课程，也不会提交选课请求。
+// 成功选到一门课后，请从本列表手动删除该课程号，再重新运行脚本，开始下一轮。
+// 本分支不做课程时间分组；每个课程号都被视为独立目标。
 // ============================================================================
 const SCU_COURSE_MONITOR_CONFIG = {
   queryWaitTime: 1800,
   roundWaitTime: 5000,
+  beforeSubmitWaitTime: 400,
+  submitResponseTimeout: 15000,
   courseNumbers: [
     "请填写课程号"
     // ,"第二门课程号"
@@ -38,10 +36,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
   } catch (_) {}
 
   const CONFIG = SCU_COURSE_MONITOR_CONFIG;
-  const weekdayNames = {
-    1: "星期一", 2: "星期二", 3: "星期三", 4: "星期四",
-    5: "星期五", 6: "星期六", 7: "星期日"
-  };
+  const SUBMIT_URL_KEY = "/student/courseSelect/selectCourse/checkInputCodeAndSubmit";
   const courseNumbers = [...new Set(
     (CONFIG.courseNumbers || []).map(value => String(value).trim())
   )];
@@ -51,9 +46,12 @@ const SCU_COURSE_MONITOR_CONFIG = {
   const state = {
     stopped: false,
     roundRunning: false,
+    submitInProgress: false,
+    manualPause: false,
     roundNumber: 0,
     timer: null,
-    lastPlan: null
+    submitTimer: null,
+    pending: null
   };
   const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -88,18 +86,16 @@ const SCU_COURSE_MONITOR_CONFIG = {
     });
   };
 
-  const setAvailableOnlyFilter = async enabled => {
+  const ensureAvailableOnlyChecked = async () => {
     const context = getContext();
     const checkbox = context && findAvailableOnlyCheckbox(context.doc);
     if (!checkbox) throw new Error("未找到“有课余量的课程”筛选框。");
-    if (checkbox.checked !== enabled) {
-      console.log(`${enabled ? "☑️ 正在开启" : "☐ 正在关闭"}“有课余量的课程”筛选。`);
+    if (!checkbox.checked) {
+      console.log("☑️ 正在开启“有课余量的课程”筛选。");
       checkbox.click();
       await sleep(600);
     }
-    if (checkbox.checked !== enabled) {
-      throw new Error(`无法确认“有课余量的课程”筛选已${enabled ? "开启" : "关闭"}。`);
-    }
+    if (!checkbox.checked) throw new Error("无法确认“有课余量的课程”筛选已开启。");
   };
 
   const setInputValue = (input, value) => {
@@ -109,28 +105,20 @@ const SCU_COURSE_MONITOR_CONFIG = {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   };
 
-  const parseCourseRow = (row, priority, resultOrder) => {
+  const parseCourseRow = row => {
     const checkbox = row.querySelector('input[type="checkbox"][name="kcId"]');
     if (!checkbox?.value) return null;
     try {
       const data = JSON.parse(checkbox.value);
-      const startPeriod = Number(data.skjc);
-      const periodCount = Number(data.cxjc);
-      if (!data.kch || !data.kxh || !startPeriod || !periodCount) return null;
+      if (!data.kch || !data.kxh) return null;
       return {
+        row,
+        checkbox,
         id: checkbox.id,
         kch: String(data.kch),
         kxh: String(data.kxh),
         name: data.kcm || "未命名课程",
-        availableSeats: Number(data.bkskyl),
-        weekText: data.zcsm || "周次未知",
-        weekday: Number(data.skxq),
-        weekdayText: weekdayNames[Number(data.skxq)] || `未知星期(${data.skxq})`,
-        startPeriod,
-        periodCount,
-        endPeriod: startPeriod + periodCount - 1,
-        priority,
-        resultOrder
+        availableSeats: Number(data.bkskyl)
       };
     } catch (error) {
       console.warn("无法解析课程行数据：", error);
@@ -138,50 +126,156 @@ const SCU_COURSE_MONITOR_CONFIG = {
     }
   };
 
-  // 同一天内，节次区间有重叠的课程合并为同一个时段组。
-  const buildTimeGroups = sections => {
-    const sectionsByWeekday = new Map();
-    for (const section of sections) {
-      const sameDay = sectionsByWeekday.get(section.weekday) || [];
-      sameDay.push(section);
-      sectionsByWeekday.set(section.weekday, sameDay);
-    }
-
-    const groups = [];
-    for (const sameDay of sectionsByWeekday.values()) {
-      const ordered = [...sameDay].sort((left, right) =>
-        left.startPeriod - right.startPeriod || left.endPeriod - right.endPeriod
-      );
-      let currentGroup = null;
-      for (const section of ordered) {
-        if (!currentGroup || section.startPeriod > currentGroup.endPeriod) {
-          currentGroup = {
-            weekday: section.weekday,
-            weekdayText: section.weekdayText,
-            startPeriod: section.startPeriod,
-            endPeriod: section.endPeriod,
-            sections: []
-          };
-          groups.push(currentGroup);
-        } else {
-          currentGroup.endPeriod = Math.max(currentGroup.endPeriod, section.endPeriod);
-        }
-        currentGroup.sections.push(section);
-      }
-    }
-
-    return groups
-      .sort((left, right) => left.weekday - right.weekday || left.startPeriod - right.startPeriod)
-      .map(group => ({
-        ...group,
-        key: `${group.weekday}:${group.startPeriod}-${group.endPeriod}`,
-        selected: [...group.sections]
-          .filter(section => section.availableSeats > 0)
-          .sort((left, right) => left.priority - right.priority || left.resultOrder - right.resultOrder)[0]
-      }));
+  const clearSubmitTimer = () => {
+    if (state.submitTimer) clearTimeout(state.submitTimer);
+    state.submitTimer = null;
   };
 
-  const queryCourseSections = async (courseNumber, priority) => {
+  const uncheckPending = () => {
+    if (!state.pending) return;
+    const context = getContext();
+    const checkbox = context?.doc.getElementById(state.pending.checkboxId);
+    if (checkbox?.checked) {
+      checkbox.click();
+      console.log(`↩️ 已取消勾选：${state.pending.target}`);
+    }
+  };
+
+  const scheduleNextRound = delay => {
+    if (state.stopped || state.roundRunning || state.submitInProgress || state.manualPause) return;
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      runRound().catch(error => {
+        console.error("监控异常：", error);
+      });
+    }, delay);
+  };
+
+  const handleSubmitFailure = message => {
+    console.warn(`⚠️ 选课未成功：${message}`);
+    clearSubmitTimer();
+    uncheckPending();
+    state.pending = null;
+    state.submitInProgress = false;
+    state.manualPause = false;
+    scheduleNextRound(3000);
+  };
+
+  const installAjaxHooks = () => {
+    const jq = top.jQuery || top.$;
+    if (!jq) throw new Error("未找到页面 jQuery，无法确认提交结果。");
+    const eventTarget = jq(top.document);
+    eventTarget.off("ajaxSuccess.scuBasicCourseFlow");
+    eventTarget.off("ajaxError.scuBasicCourseFlow");
+
+    eventTarget.on("ajaxSuccess.scuBasicCourseFlow", (_event, _xhr, settings, data) => {
+      if (!String(settings?.url || "").includes(SUBMIT_URL_KEY) || !state.pending) return;
+      clearSubmitTimer();
+      let payload = data;
+      if (typeof payload === "string") {
+        try { payload = JSON.parse(payload); } catch (_) {}
+      }
+      const result = payload && typeof payload === "object" ? String(payload.result ?? "") : "";
+      const pending = state.pending;
+
+      if (result === "ok") {
+        state.pending = null;
+        state.submitInProgress = false;
+        state.stopped = true;
+        console.log(`✅ 选课成功：${pending.target} ${pending.name}`);
+        alert(
+          `选课成功：\n${pending.target} ${pending.name}\n\n` +
+          "请从脚本顶部的 courseNumbers 中手动删除该课程号，再重新运行脚本继续监控。"
+        );
+      } else {
+        handleSubmitFailure(result || "服务器未返回成功结果");
+      }
+    });
+
+    eventTarget.on("ajaxError.scuBasicCourseFlow", (_event, _xhr, settings) => {
+      if (!String(settings?.url || "").includes(SUBMIT_URL_KEY) || !state.pending) return;
+      handleSubmitFailure("网络请求失败");
+    });
+  };
+
+  const captchaIsMissing = () => {
+    const area = top.document.getElementById("yzm_area");
+    const input = top.document.getElementById("submitCode");
+    const required = area && top.getComputedStyle(area).display !== "none";
+    return required && !input?.value.trim();
+  };
+
+  async function selectAndSubmit(candidate) {
+    if (state.stopped || state.submitInProgress || state.manualPause) return;
+    const context = getContext();
+    if (!context) throw new Error("提交前未找到课程列表。");
+
+    const checked = [...context.doc.querySelectorAll('input[type="checkbox"][name="kcId"]:checked')];
+    if (checked.some(checkbox => checkbox !== candidate.checkbox)) {
+      state.manualPause = true;
+      alert("检测到页面上已有其他课程被勾选。为避免误提交，脚本已暂停。");
+      return;
+    }
+    if (candidate.checkbox.disabled) {
+      console.warn(`${candidate.kch}_${candidate.kxh} 当前不可勾选。`);
+      return;
+    }
+    if (!candidate.checkbox.checked) candidate.checkbox.click();
+    await sleep(250);
+
+    const finalChecked = [...context.doc.querySelectorAll('input[type="checkbox"][name="kcId"]:checked')];
+    if (finalChecked.length !== 1 || finalChecked[0] !== candidate.checkbox) {
+      state.manualPause = true;
+      alert("自动勾选状态异常，脚本已暂停。");
+      return;
+    }
+
+    candidate.row.style.backgroundColor = "yellow";
+    candidate.row.scrollIntoView({ behavior: "smooth", block: "center" });
+    state.pending = {
+      checkboxId: candidate.id,
+      target: `${candidate.kch}_${candidate.kxh}`,
+      name: candidate.name
+    };
+
+    if (captchaIsMissing()) {
+      state.manualPause = true;
+      alert(
+        `已勾选：${state.pending.target} ${state.pending.name}\n\n` +
+        "当前系统要求验证码。请填写后手动提交；提交结果仍会由脚本确认。"
+      );
+      return;
+    }
+
+    if (typeof top.tijiao !== "function") {
+      state.manualPause = true;
+      alert("未找到页面的提交函数 tijiao()，脚本已暂停。");
+      return;
+    }
+
+    state.submitInProgress = true;
+    await sleep(CONFIG.beforeSubmitWaitTime);
+    console.log(`🚀 提交：${state.pending.target} ${state.pending.name}`);
+    try {
+      top.tijiao();
+    } catch (error) {
+      handleSubmitFailure(`调用提交函数失败：${error.message || error}`);
+      return;
+    }
+
+    clearSubmitTimer();
+    state.submitTimer = setTimeout(() => {
+      if (!state.pending) return;
+      state.submitInProgress = false;
+      state.manualPause = true;
+      alert(
+        `已发起提交：${state.pending.target}\n\n` +
+        "15 秒内未捕获到明确结果。请查看页面提示；确认后可调用 resumeCourseMonitor()。"
+      );
+    }, CONFIG.submitResponseTimeout);
+  }
+
+  const queryAvailableCandidates = async courseNumber => {
     const context = getContext();
     if (!context) throw new Error("找不到课程号输入框、查询按钮或课程列表。");
     console.log(`🔎 查询 ${courseNumber}…`);
@@ -191,89 +285,66 @@ const SCU_COURSE_MONITOR_CONFIG = {
 
     const refreshedContext = getContext();
     if (!refreshedContext) throw new Error("查询后未找到课程列表。");
-    const sections = [...refreshedContext.tbody.querySelectorAll("tr")]
-      .map((row, resultOrder) => parseCourseRow(row, priority, resultOrder))
-      .filter(section => section?.kch === courseNumber);
-    const availableCount = sections.filter(section => section.availableSeats > 0).length;
-    console.log(`${courseNumber}：读取到 ${sections.length} 个班次，其中 ${availableCount} 个有余量。`);
-    return sections;
-  };
-
-  const summarizeSection = section =>
-    `${section.kch}_${section.kxh} ${section.name}（余量 ${section.availableSeats}）`;
-
-  const printSimulationPlan = groups => {
-    if (groups.length === 0) {
-      console.log("本轮没有配置课程出现余量，继续监控。\n");
-      return;
-    }
-    console.log(`\n🧪 第 ${state.roundNumber} 轮模拟选择计划：${groups.length} 个时段组。`);
-    console.table(groups.map((group, index) => ({
-      分组: `组 ${index + 1}`,
-      时段: `${group.weekdayText} / 第 ${group.startPeriod}~${group.endPeriod} 节`,
-      将选择: group.selected ? summarizeSection(group.selected) : "暂无有余量班次",
-      成功后将停止的同组候选: group.selected ? group.sections
-        .filter(section => section.id !== group.selected.id)
-        .map(summarizeSection)
-        .join(" | ") || "无" : "暂无",
-      候选数量: group.sections.length
-    })));
-    console.log("🧪 模拟模式：以上内容仅为计划，不会勾选或提交课程。\n");
-  };
-
-  const scheduleNextRound = delay => {
-    if (state.stopped || state.roundRunning) return;
-    if (state.timer) clearTimeout(state.timer);
-    state.timer = setTimeout(() => {
-      runRound().catch(error => {
-        console.error("监控异常：", error);
-        scheduleNextRound(CONFIG.roundWaitTime);
-      });
-    }, delay);
+    const candidates = [...refreshedContext.tbody.querySelectorAll("tr")]
+      .map(parseCourseRow)
+      .filter(candidate => candidate?.kch === courseNumber && candidate.availableSeats > 0);
+    console.log(`${courseNumber}：有余量班次 ${candidates.length} 个。`);
+    return candidates;
   };
 
   async function runRound() {
-    if (state.stopped || state.roundRunning) return;
+    if (state.stopped || state.roundRunning || state.submitInProgress || state.manualPause) return;
     state.roundRunning = true;
     state.roundNumber += 1;
     try {
-      await setAvailableOnlyFilter(false);
-      console.log(`\n========== 第 ${state.roundNumber} 轮模拟分类 ==========`);
-      const sections = [];
-      const notFoundCourseNumbers = [];
-      for (const [priority, courseNumber] of courseNumbers.entries()) {
-        if (state.stopped) return;
-        const matches = await queryCourseSections(courseNumber, priority);
-        if (matches.length === 0) notFoundCourseNumbers.push(courseNumber);
-        sections.push(...matches);
+      await ensureAvailableOnlyChecked();
+      console.log(`\n========== 第 ${state.roundNumber} 轮基础监控 ==========`);
+      for (const courseNumber of courseNumbers) {
+        if (state.stopped || state.manualPause) return;
+        const candidates = await queryAvailableCandidates(courseNumber);
+        if (candidates.length > 0) {
+          await selectAndSubmit(candidates[0]);
+          return;
+        }
       }
-      const groups = buildTimeGroups(sections);
-      state.lastPlan = { groups, notFoundCourseNumbers, generatedAt: new Date().toISOString() };
-      printSimulationPlan(groups);
-      if (notFoundCourseNumbers.length > 0) {
-        console.log("本轮未查到班次的课程号：", notFoundCourseNumbers.join("、"));
-      }
+      console.log("本轮未发现目标课程余量。\n");
     } finally {
       state.roundRunning = false;
-      if (!state.stopped) scheduleNextRound(CONFIG.roundWaitTime);
+      if (!state.stopped && !state.submitInProgress && !state.manualPause) {
+        scheduleNextRound(CONFIG.roundWaitTime);
+      }
     }
   }
 
   const stopMonitor = () => {
     state.stopped = true;
     if (state.timer) clearTimeout(state.timer);
-    state.timer = null;
-    console.log("🛑 已停止模拟监控。");
-  };
-  const resumeMonitor = () => {
-    if (!state.stopped && (state.roundRunning || state.timer)) {
-      console.log("模拟监控正在运行，无需恢复。");
-      return;
+    clearSubmitTimer();
+    const jq = top.jQuery || top.$;
+    if (jq) {
+      jq(top.document).off("ajaxSuccess.scuBasicCourseFlow");
+      jq(top.document).off("ajaxError.scuBasicCourseFlow");
     }
+    console.log("🛑 已停止基础选课流程。");
+  };
+
+  const resumeMonitor = () => {
+    if (state.pending) uncheckPending();
+    clearSubmitTimer();
+    state.pending = null;
+    state.submitInProgress = false;
+    state.manualPause = false;
     state.stopped = false;
-    console.log("▶️ 已恢复模拟监控。");
+    console.log("▶️ 已恢复基础选课流程。");
     scheduleNextRound(0);
   };
+
+  try {
+    installAjaxHooks();
+  } catch (error) {
+    console.error("无法启动基础选课流程：", error);
+    return;
+  }
 
   window.stopCourseMonitor = stopMonitor;
   window.__courseMonitorStop = stopMonitor;
@@ -285,8 +356,8 @@ const SCU_COURSE_MONITOR_CONFIG = {
     status: window.courseMonitorStatus
   };
 
-  console.log("🧪 SCU Course Monitor 模拟选择版已启动。");
-  console.log("🧪 会关闭余量筛选以读取全部班次；不会勾选或提交课程。");
+  console.log("🚀 SCU Course Monitor 基础选课流程已启动（无分组）。");
+  console.log("🚀 发现第一门有余量课程后将自动勾选并提交，然后停止。");
   console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；状态：courseMonitorStatus()");
   scheduleNextRound(0);
 })();
