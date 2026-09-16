@@ -17,13 +17,13 @@
 
 ## 配置
 
-复制 `config.example.js` 为 `config.js`，按页面显示填写课程：
+打开 `src/scu-course-monitor.user.js`，只修改文件顶部的“用户课程配置”区域。按页面显示填写课程：
 
 ```js
 { kch: "106588020", kxh: "01", name: "巴蜀文化" }
 ```
 
-不同时间段请放在不同分组。
+同一时间段的备选课放在同一个 `courses` 列表；不同时间段请复制分组模板并使用不同的 `id`。独立模板也见 `config.example.js`。
 
 ## 运行
 
