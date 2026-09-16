@@ -40,6 +40,10 @@ courseMonitorStatus()
 resumeCourseMonitor()
 ```
 
+## 解析测试
+
+在真正使用前，可先在自由选课页面查询任意课程，再把 `tests/parse-course-metadata.console.js` 的内容复制到浏览器 Console 运行。它只读取当前课程表格，打印课程号、课序号、课余量、周次、星期与节次，并检测当前结果中的时间冲突；不会查询、勾选或提交课程。
+
 ## 开发计划
 
 - 把现有 Console 脚本整理为单一版本
