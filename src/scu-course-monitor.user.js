@@ -13,8 +13,9 @@
 // 每一项只填写课程号，例如 "106588020"。
 // 课序号、课程名称、课余量和上课时间会从选课页面自动读取。
 //
-// 同一课程号有多个班时，脚本会把页面显示的每个班都作为候选项；
-// 后续自动选课版本将根据实际的周次、星期与节次自动排除冲突班次。
+// 同一课程号有多个班时，脚本会把页面显示的每个班都作为候选项。
+// 脚本按“星期 + 起始节次”自动分组：例如周四 10~11 节和周四 10~12 节
+// 属于同一组；后续自动选课成功一门后，将停止该组的其他候选课程。
 //
 // 可直接在下面新增或删除课程号。
 // ============================================================================
@@ -95,16 +96,9 @@ const SCU_COURSE_MONITOR_CONFIG = {
     }
   };
 
-  const hasOverlappingWeeks = (leftWeeks, rightWeeks) =>
-    leftWeeks.length === rightWeeks.length &&
-    [...leftWeeks].some((week, index) => week === "1" && rightWeeks[index] === "1");
-
-  // 用于后续自动选课：同一天、节次相交且周次相交，才属于真正的时间冲突。
-  const hasTimeConflict = (left, right) =>
-    left.weekday === right.weekday &&
-    left.startPeriod <= right.endPeriod &&
-    right.startPeriod <= left.endPeriod &&
-    hasOverlappingWeeks(left.weeks, right.weeks);
+  // 用户主动将同一时段的课程作为备选项。本项目按星期和起始节次分组，
+  // 不再根据周次或结束节次推断是否可以同时选课。
+  const timeGroupKey = section => `${section.weekday}:${section.startPeriod}`;
 
   async function check(courseNumber) {
     const input = doc.getElementById("kch");

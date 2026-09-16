@@ -7,6 +7,7 @@
  * 3. 将本文件完整复制到浏览器 Console 后运行。
  *
  * 此脚本只读取当前表格并打印数据：不会查询、勾选、提交或修改选课状态。
+ * 它会按“星期 + 起始节次”打印自动分组结果。
  */
 
 (() => {
@@ -74,29 +75,13 @@
     .filter(Boolean)
     .filter(section => wanted.size === 0 || wanted.has(section.kch));
 
-  const hasOverlappingWeeks = (leftWeeks, rightWeeks) =>
-    leftWeeks.length === rightWeeks.length &&
-    [...leftWeeks].some((week, index) => week === "1" && rightWeeks[index] === "1");
-
-  const hasTimeConflict = (left, right) =>
-    left.weekday === right.weekday &&
-    left.startPeriod <= right.endPeriod &&
-    right.startPeriod <= left.endPeriod &&
-    hasOverlappingWeeks(left.weekMask, right.weekMask);
-
-  const conflicts = [];
-  for (let leftIndex = 0; leftIndex < sections.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < sections.length; rightIndex += 1) {
-      const left = sections[leftIndex];
-      const right = sections[rightIndex];
-      if (hasTimeConflict(left, right)) {
-        conflicts.push({
-          left: `${left.kch}_${left.kxh} ${left.name}`,
-          right: `${right.kch}_${right.kxh} ${right.name}`,
-          time: `${left.weekText} / ${left.weekdayText} / ${left.startPeriod}~${left.endPeriod}节`
-        });
-      }
-    }
+  const timeGroupKey = section => `${section.weekday}:${section.startPeriod}`;
+  const timeGroups = new Map();
+  for (const section of sections) {
+    const key = timeGroupKey(section);
+    const group = timeGroups.get(key) || [];
+    group.push(section);
+    timeGroups.set(key, group);
   }
 
   const printable = sections.map(section => ({
@@ -113,14 +98,16 @@
   console.log(`解析完成：${sections.length} 个班次。`);
   console.table(printable);
 
-  if (conflicts.length > 0) {
-    console.log(`检测到 ${conflicts.length} 组时间冲突：`);
-    console.table(conflicts);
-  } else {
-    console.log("当前结果中未检测到时间冲突。");
-  }
+  const printableGroups = [...timeGroups.entries()].map(([key, group]) => ({
+    分组: key,
+    时段: `${group[0].weekdayText} / 第 ${group[0].startPeriod} 节开始`,
+    候选班次: group.map(section => `${section.kch}_${section.kxh} ${section.name}`).join(" | "),
+    班次数量: group.length
+  }));
+  console.log(`自动分为 ${timeGroups.size} 个时段组：`);
+  console.table(printableGroups);
 
   // 方便在 Console 中继续查看完整原始字段。
-  window.__scuCourseParseTest = { sections, conflicts };
+  window.__scuCourseParseTest = { sections, timeGroups };
   console.log("完整数据：window.__scuCourseParseTest");
 })();
