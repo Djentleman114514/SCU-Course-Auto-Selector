@@ -16,7 +16,8 @@
 // 课序号、课程名称、课余量和上课时间会从选课页面自动读取。
 // 同一天内节次区间重叠的候选课会自动归入同一个时段组。
 //
-// 当前是“模拟选择版”：只打印计划选择的课程和将停止的同组候选课，
+// 当前是“模拟选择版”：会暂时关闭“有课余量的课程”筛选，读取全部班次
+// 以验证完整分组；但只把课余量大于 0 的班次列为“将选择”。
 // 不会勾选任何课程，也不会提交选课请求。
 // ============================================================================
 const SCU_COURSE_MONITOR_CONFIG = {
@@ -87,16 +88,18 @@ const SCU_COURSE_MONITOR_CONFIG = {
     });
   };
 
-  const ensureAvailableOnlyChecked = async () => {
+  const setAvailableOnlyFilter = async enabled => {
     const context = getContext();
     const checkbox = context && findAvailableOnlyCheckbox(context.doc);
     if (!checkbox) throw new Error("未找到“有课余量的课程”筛选框。");
-    if (!checkbox.checked) {
-      console.log("☑️ 正在开启“有课余量的课程”筛选。");
+    if (checkbox.checked !== enabled) {
+      console.log(`${enabled ? "☑️ 正在开启" : "☐ 正在关闭"}“有课余量的课程”筛选。`);
       checkbox.click();
       await sleep(600);
     }
-    if (!checkbox.checked) throw new Error("无法确认“有课余量的课程”筛选已开启。");
+    if (checkbox.checked !== enabled) {
+      throw new Error(`无法确认“有课余量的课程”筛选已${enabled ? "开启" : "关闭"}。`);
+    }
   };
 
   const setInputValue = (input, value) => {
@@ -172,13 +175,13 @@ const SCU_COURSE_MONITOR_CONFIG = {
       .map(group => ({
         ...group,
         key: `${group.weekday}:${group.startPeriod}-${group.endPeriod}`,
-        selected: [...group.sections].sort((left, right) =>
-          left.priority - right.priority || left.resultOrder - right.resultOrder
-        )[0]
+        selected: [...group.sections]
+          .filter(section => section.availableSeats > 0)
+          .sort((left, right) => left.priority - right.priority || left.resultOrder - right.resultOrder)[0]
       }));
   };
 
-  const queryAvailableSections = async (courseNumber, priority) => {
+  const queryCourseSections = async (courseNumber, priority) => {
     const context = getContext();
     if (!context) throw new Error("找不到课程号输入框、查询按钮或课程列表。");
     console.log(`🔎 查询 ${courseNumber}…`);
@@ -190,8 +193,9 @@ const SCU_COURSE_MONITOR_CONFIG = {
     if (!refreshedContext) throw new Error("查询后未找到课程列表。");
     const sections = [...refreshedContext.tbody.querySelectorAll("tr")]
       .map((row, resultOrder) => parseCourseRow(row, priority, resultOrder))
-      .filter(section => section?.kch === courseNumber && section.availableSeats > 0);
-    console.log(`${courseNumber}：本轮有余量班次 ${sections.length} 个。`);
+      .filter(section => section?.kch === courseNumber);
+    const availableCount = sections.filter(section => section.availableSeats > 0).length;
+    console.log(`${courseNumber}：读取到 ${sections.length} 个班次，其中 ${availableCount} 个有余量。`);
     return sections;
   };
 
@@ -207,11 +211,11 @@ const SCU_COURSE_MONITOR_CONFIG = {
     console.table(groups.map((group, index) => ({
       分组: `组 ${index + 1}`,
       时段: `${group.weekdayText} / 第 ${group.startPeriod}~${group.endPeriod} 节`,
-      将选择: summarizeSection(group.selected),
-      将停止的同组候选: group.sections
+      将选择: group.selected ? summarizeSection(group.selected) : "暂无有余量班次",
+      成功后将停止的同组候选: group.selected ? group.sections
         .filter(section => section.id !== group.selected.id)
         .map(summarizeSection)
-        .join(" | ") || "无",
+        .join(" | ") || "无" : "暂无",
       候选数量: group.sections.length
     })));
     console.log("🧪 模拟模式：以上内容仅为计划，不会勾选或提交课程。\n");
@@ -233,21 +237,21 @@ const SCU_COURSE_MONITOR_CONFIG = {
     state.roundRunning = true;
     state.roundNumber += 1;
     try {
-      await ensureAvailableOnlyChecked();
-      console.log(`\n========== 第 ${state.roundNumber} 轮模拟监控 ==========`);
+      await setAvailableOnlyFilter(false);
+      console.log(`\n========== 第 ${state.roundNumber} 轮模拟分类 ==========`);
       const sections = [];
-      const missingCourseNumbers = [];
+      const notFoundCourseNumbers = [];
       for (const [priority, courseNumber] of courseNumbers.entries()) {
         if (state.stopped) return;
-        const matches = await queryAvailableSections(courseNumber, priority);
-        if (matches.length === 0) missingCourseNumbers.push(courseNumber);
+        const matches = await queryCourseSections(courseNumber, priority);
+        if (matches.length === 0) notFoundCourseNumbers.push(courseNumber);
         sections.push(...matches);
       }
       const groups = buildTimeGroups(sections);
-      state.lastPlan = { groups, missingCourseNumbers, generatedAt: new Date().toISOString() };
+      state.lastPlan = { groups, notFoundCourseNumbers, generatedAt: new Date().toISOString() };
       printSimulationPlan(groups);
-      if (missingCourseNumbers.length > 0) {
-        console.log("本轮未发现余量的课程号：", missingCourseNumbers.join("、"));
+      if (notFoundCourseNumbers.length > 0) {
+        console.log("本轮未查到班次的课程号：", notFoundCourseNumbers.join("、"));
       }
     } finally {
       state.roundRunning = false;
@@ -282,7 +286,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
   };
 
   console.log("🧪 SCU Course Monitor 模拟选择版已启动。");
-  console.log("🧪 只会打印选课计划，不会勾选或提交课程。");
+  console.log("🧪 会关闭余量筛选以读取全部班次；不会勾选或提交课程。");
   console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；状态：courseMonitorStatus()");
   scheduleNextRound(0);
 })();

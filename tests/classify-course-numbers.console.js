@@ -4,7 +4,7 @@
  * 此脚本会依次查询配置中的课程号，并按同一天内节次区间重叠的规则自动分组。
  * 它会改变页面当前的查询结果，但不会勾选、提交或修改任何选课状态。
  *
- * 脚本会确认并自动开启“有课余量的课程”筛选，只分类本轮实际可选的班次。
+ * 脚本会确认并自动关闭“有课余量的课程”筛选，以取得全部班次进行完整分类。
  */
 
 (() => {
@@ -129,13 +129,13 @@
       console.error("未找到“有课余量的课程”筛选框，请确认当前位于自由选课页面。");
       return;
     }
-    if (!availableOnlyCheckbox.checked) {
-      console.log("正在开启“有课余量的课程”筛选…");
+    if (availableOnlyCheckbox.checked) {
+      console.log("正在关闭“有课余量的课程”筛选，以读取全部班次…");
       availableOnlyCheckbox.click();
       await sleep(600);
     }
-    if (!availableOnlyCheckbox.checked) {
-      console.error("无法确认“有课余量的课程”筛选已开启，测试停止。");
+    if (availableOnlyCheckbox.checked) {
+      console.error("无法确认“有课余量的课程”筛选已关闭，测试停止。");
       return;
     }
 
@@ -161,7 +161,7 @@
     }
 
     const groups = buildTimeGroups(sections);
-    console.log(`分类完成：${sections.length} 个有余量班次，${groups.length} 个时段组。`);
+    console.log(`分类完成：${sections.length} 个班次，${groups.length} 个时段组。`);
     console.table(sections.map(section => ({
       课程: `${section.kch}_${section.kxh}`,
       名称: section.name,
