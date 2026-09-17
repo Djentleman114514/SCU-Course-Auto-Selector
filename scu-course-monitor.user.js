@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SCU Course Monitor - Basic Flow
 // @namespace    scu-course-monitor
-// @version      0.4.0-basic
-// @description  四川大学自由选课页面基础选课流程（无分组）
+// @version      1.0.0
+// @description  四川大学自由选课页面基础选课流程（可选课序号限制）
 // @match        https://*.scu.edu.cn/*
 // @grant        none
 // ==/UserScript==
