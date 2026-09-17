@@ -34,6 +34,14 @@ resumeCourseMonitor()
 resetCourseMonitorProgress()
 ```
 
+重新输入课程时，推荐使用更简短的：
+
+```js
+reset()
+```
+
+`resetCourseMonitorProgress()` 仍可使用。
+
 ## 解析测试
 
 在真正使用前，可先在自由选课页面查询任意课程，再把 `tests/parse-course-metadata.console.js` 的内容复制到浏览器 Console 运行。它只读取当前课程表格，打印课程号、课序号、课余量、周次、星期与节次，并展示按同一天内“节次区间重叠”得到的自动分组；不会查询、勾选或提交课程。

@@ -419,6 +419,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
   window.stopCourseMonitor = stopMonitor;
   window.__courseMonitorStop = stopMonitor;
   window.resumeCourseMonitor = resumeMonitor;
+  window.reset = resetCourseMonitorProgress;
   window.resetCourseMonitorProgress = resetCourseMonitorProgress;
   window.courseMonitorStatus = () => ({ ...state, config: CONFIG });
   window.__scuCourseMonitor = {
@@ -430,6 +431,6 @@ const SCU_COURSE_MONITOR_CONFIG = {
 
   console.log("🚀 SCU Course Monitor 基础选课流程已启动（无分组）。");
   console.log("🚀 发现第一门有余量课程后将自动勾选并提交，然后停止。");
-  console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；清空进度：resetCourseMonitorProgress()");
+  console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；重新输入课程：reset()");
   scheduleNextRound(0);
 })();
