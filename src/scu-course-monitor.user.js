@@ -13,7 +13,8 @@
 // 运行后，脚本会用弹窗逐门询问课程号。输入一门后按 Enter 继续输入下一门；
 // 留空或点击“取消”后，脚本按输入顺序开始监控。
 //
-// 成功选到一门课后，重新运行脚本并只输入剩余课程号，即可开始下一轮。
+// 成功选到一门课后，脚本会自动保存剩余课程。回到自由选课页面重新运行脚本，
+// 即可继续监控，无需重新输入。
 // 本分支不做课程时间分组；每个课程号都被视为独立目标。
 // ============================================================================
 const SCU_COURSE_MONITOR_CONFIG = {
@@ -32,6 +33,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
 
   const CONFIG = SCU_COURSE_MONITOR_CONFIG;
   const SUBMIT_URL_KEY = "/student/courseSelect/selectCourse/checkInputCodeAndSubmit";
+  const STORAGE_KEY = "scu_basic_course_flow_remaining_v1";
   const collectCourseNumbers = () => {
     const collected = [];
     let number = 1;
@@ -60,7 +62,36 @@ const SCU_COURSE_MONITOR_CONFIG = {
 
     return collected;
   };
-  const courseNumbers = collectCourseNumbers();
+  const loadSavedCourseNumbers = () => {
+    try {
+      const raw = top.sessionStorage.getItem(STORAGE_KEY);
+      const parsed = raw && JSON.parse(raw);
+      if (!Array.isArray(parsed?.courseNumbers)) return [];
+      return parsed.courseNumbers.filter(courseNumber => /^\d+$/.test(String(courseNumber)));
+    } catch (_) {
+      return [];
+    }
+  };
+  const saveCourseNumbers = numbers => {
+    try {
+      if (numbers.length === 0) {
+        top.sessionStorage.removeItem(STORAGE_KEY);
+      } else {
+        top.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+          courseNumbers: numbers,
+          updatedAt: new Date().toISOString()
+        }));
+      }
+    } catch (error) {
+      console.warn("剩余课程保存失败：", error);
+    }
+  };
+  const savedCourseNumbers = loadSavedCourseNumbers();
+  const continueSavedCourseNumbers = savedCourseNumbers.length > 0 && window.confirm(
+    `检测到上次未完成的课程：\n${savedCourseNumbers.join("、")}\n\n` +
+    "点击“确定”继续监控这些课程；点击“取消”重新输入课程号。"
+  );
+  const courseNumbers = continueSavedCourseNumbers ? savedCourseNumbers : collectCourseNumbers();
   const state = {
     stopped: false,
     roundRunning: false,
@@ -74,9 +105,14 @@ const SCU_COURSE_MONITOR_CONFIG = {
   const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
   if (courseNumbers.length === 0) {
+    if (savedCourseNumbers.length > 0 && !continueSavedCourseNumbers) {
+      saveCourseNumbers([]);
+    }
     console.error("未输入课程号，脚本未启动。");
     return;
   }
+
+  saveCourseNumbers(courseNumbers);
 
   const getContext = () => {
     const iframe =
@@ -197,13 +233,20 @@ const SCU_COURSE_MONITOR_CONFIG = {
       const pending = state.pending;
 
       if (result === "ok") {
+        const remainingCourseNumbers = courseNumbers.filter(
+          courseNumber => courseNumber !== pending.courseNumber
+        );
+        saveCourseNumbers(remainingCourseNumbers);
         state.pending = null;
         state.submitInProgress = false;
         state.stopped = true;
         console.log(`✅ 选课成功：${pending.target} ${pending.name}`);
         alert(
           `选课成功：\n${pending.target} ${pending.name}\n\n` +
-          "请从脚本顶部的 courseNumbers 中手动删除该课程号，再重新运行脚本继续监控。"
+          (remainingCourseNumbers.length > 0
+            ? `已自动保存剩余课程：${remainingCourseNumbers.join("、")}\n` +
+              "回到自由选课页面后重新运行脚本，即可继续监控。"
+            : "所有输入课程均已完成，已自动清空本次保存进度。")
         );
       } else {
         handleSubmitFailure(result || "服务器未返回成功结果");
@@ -252,6 +295,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
     candidate.row.scrollIntoView({ behavior: "smooth", block: "center" });
     state.pending = {
       checkboxId: candidate.id,
+      courseNumber: candidate.kch,
       target: `${candidate.kch}_${candidate.kxh}`,
       name: candidate.name
     };
@@ -357,6 +401,14 @@ const SCU_COURSE_MONITOR_CONFIG = {
     scheduleNextRound(0);
   };
 
+  const resetCourseMonitorProgress = () => {
+    try {
+      top.sessionStorage.removeItem(STORAGE_KEY);
+    } catch (_) {}
+    stopMonitor();
+    alert("已清空保存的剩余课程。请重新运行脚本并输入新的课程号。");
+  };
+
   try {
     installAjaxHooks();
   } catch (error) {
@@ -367,15 +419,17 @@ const SCU_COURSE_MONITOR_CONFIG = {
   window.stopCourseMonitor = stopMonitor;
   window.__courseMonitorStop = stopMonitor;
   window.resumeCourseMonitor = resumeMonitor;
+  window.resetCourseMonitorProgress = resetCourseMonitorProgress;
   window.courseMonitorStatus = () => ({ ...state, config: CONFIG });
   window.__scuCourseMonitor = {
     stop: stopMonitor,
     resume: resumeMonitor,
+    reset: resetCourseMonitorProgress,
     status: window.courseMonitorStatus
   };
 
   console.log("🚀 SCU Course Monitor 基础选课流程已启动（无分组）。");
   console.log("🚀 发现第一门有余量课程后将自动勾选并提交，然后停止。");
-  console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；状态：courseMonitorStatus()");
+  console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；清空进度：resetCourseMonitorProgress()");
   scheduleNextRound(0);
 })();
