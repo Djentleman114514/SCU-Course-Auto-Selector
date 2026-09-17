@@ -3,6 +3,7 @@
 const SCU_COURSE_MONITOR_CONFIG = {
   queryWaitTime: 1800,
   roundWaitTime: 5000,
+  // 👇 在下方填写“课程号”，一行一门；不要填写课序号（如 01）。
   courseNumbers: `
 105267020
 101524020
