@@ -8,30 +8,19 @@
 // ==/UserScript==
 
 // ============================================================================
-// 用户课程配置：只修改本区内容。
+// 用户课程配置：不需要填写课程号，也不需要修改本区内容。
 //
-// 每行填写一个课程号。书写顺序即优先级：脚本会从前到后查询，发现第一门
-// 有余量的课程后，自动勾选并调用页面提交函数，然后停止。
+// 运行后，脚本会用弹窗逐门询问课程号。输入一门后按 Enter 继续输入下一门；
+// 留空或点击“取消”后，脚本按输入顺序开始监控。
 //
-// 成功选到一门课后，请从本列表手动删除该课程号，再重新运行脚本，开始下一轮。
+// 成功选到一门课后，重新运行脚本并只输入剩余课程号，即可开始下一轮。
 // 本分支不做课程时间分组；每个课程号都被视为独立目标。
 // ============================================================================
 const SCU_COURSE_MONITOR_CONFIG = {
   queryWaitTime: 1800,
   roundWaitTime: 5000,
   beforeSubmitWaitTime: 400,
-  submitResponseTimeout: 15000,
-  // ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-  // ┃ 👇 请在下方空白区域填写“课程号”，一行一门。           ┃
-  // ┃ 例如：105267020                                      ┃
-  // ┃ 不要填写课序号（如 01），不要加引号或逗号。            ┃
-  // ┃ 填完后直接运行整段脚本，无需修改其他代码。              ┃
-  // ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-  courseNumbers: `
-
-
-
-`
+  submitResponseTimeout: 15000
 };
 
 (() => {
@@ -43,15 +32,35 @@ const SCU_COURSE_MONITOR_CONFIG = {
 
   const CONFIG = SCU_COURSE_MONITOR_CONFIG;
   const SUBMIT_URL_KEY = "/student/courseSelect/selectCourse/checkInputCodeAndSubmit";
-  const courseNumbers = [...new Set(
-    String(CONFIG.courseNumbers || "")
-      .split(/[\s,，]+/)
-      .map(value => value.trim())
-      .filter(Boolean)
-  )];
-  const invalidCourseNumbers = courseNumbers.filter(courseNumber =>
-    !/^\d+$/.test(courseNumber)
-  );
+  const collectCourseNumbers = () => {
+    const collected = [];
+    let number = 1;
+
+    while (true) {
+      const input = window.prompt(
+        `请输入第 ${number} 门课程的课程号（例如 105267020）。\n` +
+        "输入后按 Enter 继续添加下一门；留空或点击取消后开始监控。\n\n" +
+        `当前已输入：${collected.join("、") || "无"}`
+      );
+      if (input === null || input.trim() === "") break;
+
+      const courseNumber = input.trim();
+      if (!/^\d+$/.test(courseNumber)) {
+        alert("请输入纯数字的课程号，不要填写课序号（例如 01）。");
+        continue;
+      }
+      if (collected.includes(courseNumber)) {
+        alert(`课程号 ${courseNumber} 已输入，无需重复添加。`);
+        continue;
+      }
+
+      collected.push(courseNumber);
+      number += 1;
+    }
+
+    return collected;
+  };
+  const courseNumbers = collectCourseNumbers();
   const state = {
     stopped: false,
     roundRunning: false,
@@ -64,8 +73,8 @@ const SCU_COURSE_MONITOR_CONFIG = {
   };
   const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-  if (courseNumbers.length === 0 || invalidCourseNumbers.length > 0) {
-    console.error("课程配置未完成。请先填写脚本顶部的 SCU_COURSE_MONITOR_CONFIG。");
+  if (courseNumbers.length === 0) {
+    console.error("未输入课程号，脚本未启动。");
     return;
   }
 
