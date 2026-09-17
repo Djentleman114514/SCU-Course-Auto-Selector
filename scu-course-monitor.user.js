@@ -374,18 +374,24 @@ const SCU_COURSE_MONITOR_CONFIG = {
         const remainingCourses = courses.filter(course => !(
           course.kch === pending.course.kch && (course.kxh || "") === (pending.course.kxh || "")
         ));
+        courses = remainingCourses;
         saveCourses(remainingCourses);
+        if (remainingCourses.length > 0) uncheckPending();
         state.pending = null;
         state.submitInProgress = false;
-        state.stopped = true;
+        state.manualPause = false;
         console.log(`✅ 选课成功：${pending.target} ${pending.name}`);
-        alert(
-          `选课成功：\n${pending.target} ${pending.name}\n\n` +
-          (remainingCourses.length > 0
-            ? `已自动保存剩余课程：${remainingCourses.map(formatTarget).join("、")}\n` +
-              "回到自由选课页面后重新运行脚本，即可继续监控。"
-            : "所有输入课程均已完成，已自动清空本次保存进度。")
-        );
+        if (remainingCourses.length > 0) {
+          state.stopped = false;
+          console.log(`▶️ 将自动继续监控剩余课程：${remainingCourses.map(formatTarget).join("、")}`);
+          scheduleNextRound(CONFIG.roundWaitTime);
+        } else {
+          state.stopped = true;
+          alert(
+            `选课成功：\n${pending.target} ${pending.name}\n\n` +
+            "所有输入课程均已完成，已自动清空本次保存进度。"
+          );
+        }
       } else {
         handleSubmitFailure(result || "服务器未返回成功结果");
       }
