@@ -10,7 +10,7 @@
 // ============================================================================
 // 用户课程配置：只修改本区内容。
 //
-// 每一项只填写课程号。数组顺序即优先级：脚本会从前到后查询，发现第一门
+// 每行填写一个课程号。书写顺序即优先级：脚本会从前到后查询，发现第一门
 // 有余量的课程后，自动勾选并调用页面提交函数，然后停止。
 //
 // 成功选到一门课后，请从本列表手动删除该课程号，再重新运行脚本，开始下一轮。
@@ -21,11 +21,9 @@ const SCU_COURSE_MONITOR_CONFIG = {
   roundWaitTime: 5000,
   beforeSubmitWaitTime: 400,
   submitResponseTimeout: 15000,
-  courseNumbers: [
-    "请填写课程号"
-    // ,"第二门课程号"
-    // ,"第三门课程号"
-  ]
+  // 在下一行和结束反引号之间填写课程号，每行一个：
+  courseNumbers: `
+`
 };
 
 (() => {
@@ -38,10 +36,13 @@ const SCU_COURSE_MONITOR_CONFIG = {
   const CONFIG = SCU_COURSE_MONITOR_CONFIG;
   const SUBMIT_URL_KEY = "/student/courseSelect/selectCourse/checkInputCodeAndSubmit";
   const courseNumbers = [...new Set(
-    (CONFIG.courseNumbers || []).map(value => String(value).trim())
+    String(CONFIG.courseNumbers || "")
+      .split(/[\s,，]+/)
+      .map(value => value.trim())
+      .filter(Boolean)
   )];
   const invalidCourseNumbers = courseNumbers.filter(courseNumber =>
-    !/^\d+$/.test(courseNumber) || courseNumber.includes("请填写")
+    !/^\d+$/.test(courseNumber)
   );
   const state = {
     stopped: false,
