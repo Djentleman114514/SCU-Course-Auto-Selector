@@ -1,14 +1,8 @@
-// 复制为 config.js 后修改。config.js 已被 .gitignore 忽略。
-window.SCU_COURSE_MONITOR_CONFIG = {
-  mode: "notify",
+// 当前基础版运行后会用弹窗询问课程号，用户无需在代码中填写课程号。
+// 此文件仅保留可调的监控时间参数。
+const SCU_COURSE_MONITOR_CONFIG = {
   queryWaitTime: 1800,
   roundWaitTime: 5000,
-  groups: [
-    {
-      id: "A",
-      time: "周一 8-9节",
-      courses: [{ kch: "课程号", kxh: "课序号", name: "课程名称" }]
-    }
-  ]
+  beforeSubmitWaitTime: 400,
+  submitResponseTimeout: 15000
 };
-
