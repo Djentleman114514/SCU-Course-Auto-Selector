@@ -676,7 +676,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
 
   installResetButton();
   console.log("🚀 SCU Course Monitor 基础选课流程已启动（无分组）。");
-  console.log("🚀 发现第一门有余量课程后将自动勾选并提交，然后停止。");
+  console.log("🚀 发现第一门有余量课程后将自动勾选并提交；成功后继续监控剩余课程。");
   console.log("停止：stopCourseMonitor()；恢复：resumeCourseMonitor()；右下角按钮可重新选择课程。");
   scheduleNextRound(0);
 })();
