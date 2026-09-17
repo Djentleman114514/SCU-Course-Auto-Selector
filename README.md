@@ -1,4 +1,4 @@
-# SCU Course Monitor
+# SCU Course Auto Selector
 
 四川大学自由选课页面的自动选课脚本，面向四川大学学生使用。
 
