@@ -1,6 +1,6 @@
 # SCU Course Auto Selector
 
-四川大学自由选课页面的自动选课脚本，适用于补退选蹲课程
+四川大学自由选课页面的自动选课脚本，适用于补退选和正选蹲课程
 
 项目的功能变更、关键规则和测试结论见 [CHANGELOG.md](CHANGELOG.md)。
 
