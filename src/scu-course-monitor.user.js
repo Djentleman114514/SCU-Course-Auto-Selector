@@ -34,7 +34,8 @@ const SCU_COURSE_MONITOR_CONFIG = {
   const CONFIG = SCU_COURSE_MONITOR_CONFIG;
   const SUBMIT_URL_KEY = "/student/courseSelect/selectCourse/checkInputCodeAndSubmit";
   const STORAGE_KEY = "scu_basic_course_flow_remaining_v1";
-  const collectCourseNumbers = () => {
+  const formatTarget = target => target.kxh ? `${target.kch}_${target.kxh}` : target.kch;
+  const collectCourses = () => {
     const collected = [];
     let number = 1;
 
@@ -42,43 +43,55 @@ const SCU_COURSE_MONITOR_CONFIG = {
       const input = window.prompt(
         `请输入第 ${number} 门课程的课程号（例如 105267020）。\n` +
         "输入后按 Enter 继续添加下一门；留空或点击取消后开始监控。\n\n" +
-        `当前已输入：${collected.join("、") || "无"}`
+        `当前已输入：${collected.map(formatTarget).join("、") || "无"}`
       );
       if (input === null || input.trim() === "") break;
 
-      const courseNumber = input.trim();
-      if (!/^\d+$/.test(courseNumber)) {
-        alert("请输入纯数字的课程号，不要填写课序号（例如 01）。");
+      const kch = input.trim();
+      if (!/^\d+$/.test(kch)) {
+        alert("请输入纯数字的课程号（例如 105267020）。");
         continue;
       }
-      if (collected.includes(courseNumber)) {
-        alert(`课程号 ${courseNumber} 已输入，无需重复添加。`);
+      const sequenceInput = window.prompt(
+        `课程号 ${kch} 的课序号（可选，例如 01）。\n若任意班次均可，直接留空或点击取消。`
+      );
+      const kxh = sequenceInput === null ? "" : sequenceInput.trim();
+      if (kxh && !/^\d+$/.test(kxh)) {
+        alert("课序号应为纯数字（例如 01）；请重新输入这门课程。");
         continue;
       }
-
-      collected.push(courseNumber);
+      const target = kxh ? { kch, kxh } : { kch };
+      if (collected.some(item => item.kch === kch && (item.kxh || "") === kxh)) {
+        alert(`课程 ${formatTarget(target)} 已输入，无需重复添加。`);
+        continue;
+      }
+      collected.push(target);
       number += 1;
     }
 
     return collected;
   };
-  const loadSavedCourseNumbers = () => {
+  const normalizeCourses = values => Array.isArray(values) ? values
+    .map(value => typeof value === "string" ? { kch: value } : value)
+    .map(value => ({ kch: String(value?.kch || "").trim(), kxh: String(value?.kxh || "").trim() }))
+    .filter(value => /^\d+$/.test(value.kch) && (!value.kxh || /^\d+$/.test(value.kxh)))
+    .map(value => value.kxh ? value : { kch: value.kch }) : [];
+  const loadSavedCourses = () => {
     try {
       const raw = top.sessionStorage.getItem(STORAGE_KEY);
       const parsed = raw && JSON.parse(raw);
-      if (!Array.isArray(parsed?.courseNumbers)) return [];
-      return parsed.courseNumbers.filter(courseNumber => /^\d+$/.test(String(courseNumber)));
+      return normalizeCourses(parsed?.courses || parsed?.courseNumbers);
     } catch (_) {
       return [];
     }
   };
-  const saveCourseNumbers = numbers => {
+  const saveCourses = courses => {
     try {
-      if (numbers.length === 0) {
+      if (courses.length === 0) {
         top.sessionStorage.removeItem(STORAGE_KEY);
       } else {
         top.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
-          courseNumbers: numbers,
+          courses,
           updatedAt: new Date().toISOString()
         }));
       }
@@ -86,12 +99,12 @@ const SCU_COURSE_MONITOR_CONFIG = {
       console.warn("剩余课程保存失败：", error);
     }
   };
-  const savedCourseNumbers = loadSavedCourseNumbers();
-  const continueSavedCourseNumbers = savedCourseNumbers.length > 0 && window.confirm(
-    `检测到上次未完成的课程：\n${savedCourseNumbers.join("、")}\n\n` +
+  const savedCourses = loadSavedCourses();
+  const continueSavedCourses = savedCourses.length > 0 && window.confirm(
+    `检测到上次未完成的课程：\n${savedCourses.map(formatTarget).join("、")}\n\n` +
     "点击“确定”继续监控这些课程；点击“取消”重新输入课程号。"
   );
-  const courseNumbers = continueSavedCourseNumbers ? savedCourseNumbers : collectCourseNumbers();
+  const courses = continueSavedCourses ? savedCourses : collectCourses();
   const state = {
     stopped: false,
     roundRunning: false,
@@ -104,15 +117,15 @@ const SCU_COURSE_MONITOR_CONFIG = {
   };
   const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-  if (courseNumbers.length === 0) {
-    if (savedCourseNumbers.length > 0 && !continueSavedCourseNumbers) {
-      saveCourseNumbers([]);
+  if (courses.length === 0) {
+    if (savedCourses.length > 0 && !continueSavedCourses) {
+      saveCourses([]);
     }
     console.error("未输入课程号，脚本未启动。");
     return;
   }
 
-  saveCourseNumbers(courseNumbers);
+  saveCourses(courses);
 
   const getContext = () => {
     const iframe =
@@ -233,18 +246,18 @@ const SCU_COURSE_MONITOR_CONFIG = {
       const pending = state.pending;
 
       if (result === "ok") {
-        const remainingCourseNumbers = courseNumbers.filter(
-          courseNumber => courseNumber !== pending.courseNumber
-        );
-        saveCourseNumbers(remainingCourseNumbers);
+        const remainingCourses = courses.filter(course => !(
+          course.kch === pending.course.kch && (course.kxh || "") === (pending.course.kxh || "")
+        ));
+        saveCourses(remainingCourses);
         state.pending = null;
         state.submitInProgress = false;
         state.stopped = true;
         console.log(`✅ 选课成功：${pending.target} ${pending.name}`);
         alert(
           `选课成功：\n${pending.target} ${pending.name}\n\n` +
-          (remainingCourseNumbers.length > 0
-            ? `已自动保存剩余课程：${remainingCourseNumbers.join("、")}\n` +
+          (remainingCourses.length > 0
+            ? `已自动保存剩余课程：${remainingCourses.map(formatTarget).join("、")}\n` +
               "回到自由选课页面后重新运行脚本，即可继续监控。"
             : "所有输入课程均已完成，已自动清空本次保存进度。")
         );
@@ -266,7 +279,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
     return required && !input?.value.trim();
   };
 
-  async function selectAndSubmit(candidate) {
+  async function selectAndSubmit(candidate, course) {
     if (state.stopped || state.submitInProgress || state.manualPause) return;
     const context = getContext();
     if (!context) throw new Error("提交前未找到课程列表。");
@@ -295,7 +308,7 @@ const SCU_COURSE_MONITOR_CONFIG = {
     candidate.row.scrollIntoView({ behavior: "smooth", block: "center" });
     state.pending = {
       checkboxId: candidate.id,
-      courseNumber: candidate.kch,
+      course,
       target: `${candidate.kch}_${candidate.kxh}`,
       name: candidate.name
     };
@@ -337,11 +350,11 @@ const SCU_COURSE_MONITOR_CONFIG = {
     }, CONFIG.submitResponseTimeout);
   }
 
-  const queryAvailableCandidates = async courseNumber => {
+  const queryAvailableCandidates = async course => {
     const context = getContext();
     if (!context) throw new Error("找不到课程号输入框、查询按钮或课程列表。");
-    console.log(`🔎 查询 ${courseNumber}…`);
-    setInputValue(context.input, courseNumber);
+    console.log(`🔎 查询 ${formatTarget(course)}…`);
+    setInputValue(context.input, course.kch);
     context.queryButton.click();
     await sleep(CONFIG.queryWaitTime);
 
@@ -349,8 +362,9 @@ const SCU_COURSE_MONITOR_CONFIG = {
     if (!refreshedContext) throw new Error("查询后未找到课程列表。");
     const candidates = [...refreshedContext.tbody.querySelectorAll("tr")]
       .map(parseCourseRow)
-      .filter(candidate => candidate?.kch === courseNumber && candidate.availableSeats > 0);
-    console.log(`${courseNumber}：有余量班次 ${candidates.length} 个。`);
+      .filter(candidate => candidate?.kch === course.kch && candidate.availableSeats > 0 &&
+        (!course.kxh || candidate.kxh === course.kxh));
+    console.log(`${formatTarget(course)}：有余量班次 ${candidates.length} 个。`);
     return candidates;
   };
 
@@ -361,11 +375,11 @@ const SCU_COURSE_MONITOR_CONFIG = {
     try {
       await ensureAvailableOnlyChecked();
       console.log(`\n========== 第 ${state.roundNumber} 轮基础监控 ==========`);
-      for (const courseNumber of courseNumbers) {
+      for (const course of courses) {
         if (state.stopped || state.manualPause) return;
-        const candidates = await queryAvailableCandidates(courseNumber);
+        const candidates = await queryAvailableCandidates(course);
         if (candidates.length > 0) {
-          await selectAndSubmit(candidates[0]);
+          await selectAndSubmit(candidates[0], course);
           return;
         }
       }
